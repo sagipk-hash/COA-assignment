@@ -1,16 +1,16 @@
 //WALLACE TREE OPTIMIZED CODE
 `timescale 1ns / 1ps
-//-------------------------------------------------------
+
 // FULL ADDER
-//-------------------------------------------------------
+
 module fulladder(input wire a,b,c, output wire sum,carry);
     assign sum = a ^ b ^ c;
     assign carry = (a & b) | (b & c) | (c & a);
 endmodule
 
-//-------------------------------------------------------
+
 // 7-to-3 COMPRESSOR
-//-------------------------------------------------------
+
 module compressor_7_to_3(
     input  wire w0,w1,w2,w3,w4,w5,w6,
     output wire sum, c0, c1
@@ -27,9 +27,9 @@ module compressor_7_to_3(
     assign c1  = d4;
 endmodule
 
-//-------------------------------------------------------
+
 // ARRAY 7-to-3 COMPRESSOR
-//-------------------------------------------------------
+
 module array_7_to_3_compressor(
     input  wire [31:0] p0,p1,p2,p3,p4,p5,p6,
     output wire [31:0] psum, pc0, pc1
@@ -45,9 +45,9 @@ module array_7_to_3_compressor(
     endgenerate
 endmodule
 
-//-------------------------------------------------------
+
 // ARRAY 3-to-2 COMPRESSOR
-//-------------------------------------------------------
+
 module array_3_to_2_compressor(
     input  wire [31:0] a,b,c,
     output wire [31:0] sum, carry
@@ -56,9 +56,9 @@ module array_3_to_2_compressor(
     assign carry = ((a & b) | (b & c) | (c & a)) << 1;
 endmodule
 
-//-------------------------------------------------------
+
 // 32-BIT LADNER-FISCHER ADDER
-//-------------------------------------------------------
+
 module ladner_fischer_adder(
     input  wire [31:0] a,b,
     output wire [31:0] sum,
@@ -104,9 +104,8 @@ module ladner_fischer_adder(
     assign carry = g5[31];
 endmodule
 
-//-------------------------------------------------------
-// ✅ 4-STAGE PIPELINED WALLACE MULTIPLIER (16x16 → 32-bit)
-//-------------------------------------------------------
+
+// 4-STAGE PIPELINED WALLACE MULTIPLIER (16x16 → 32-bit)
 module piped_wallace_mult(
     input wire clock, reset,
     input wire [15:0] x,y,
@@ -116,9 +115,9 @@ module piped_wallace_mult(
     genvar i,j;
     wire [31:0] pp[0:15];
 
-    //---------------------------------------------------
+    
     // PARTIAL PRODUCTS
-    //---------------------------------------------------
+    
     generate
         for(i=0; i<16; i=i+1) begin : PP_GEN
             for(j=0; j<32; j=j+1) begin : COL
@@ -127,9 +126,9 @@ module piped_wallace_mult(
         end
     endgenerate
 
-    //---------------------------------------------------
+    
     // STAGE 0 → Compress pp[0..6] and pp[7..13]
-    //---------------------------------------------------
+    
     wire [31:0] s0,s1,c0_0,c1_0,c02_0,c12_0;
 
     array_7_to_3_compressor A0(pp[0],pp[1],pp[2],pp[3],pp[4],pp[5],pp[6], s0, c0_0, c02_0);
@@ -140,9 +139,9 @@ module piped_wallace_mult(
     wire [31:0] c02 = c02_0 << 2;
     wire [31:0] c12 = c12_0 << 2;
 
-    //---------------------------------------------------
-    // ✅ PIPELINE STAGE 1
-    //---------------------------------------------------
+    
+    // PIPELINE STAGE 1
+    
     reg [31:0] rs0,rs1,rc0,rc1,rc02,rc12, rpp14,rpp15;
 
     always @(posedge clock or posedge reset)
@@ -154,9 +153,8 @@ module piped_wallace_mult(
             rpp14<=pp[14]; rpp15<=pp[15];
         end
 
-    //---------------------------------------------------
+    
     // STAGE 1 → Compress 7 rows: (Stage0 outputs + pp14)
-    //---------------------------------------------------
     wire [31:0] sum1,carry_1,carry_2;
 
     array_7_to_3_compressor A2(
