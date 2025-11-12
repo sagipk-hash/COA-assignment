@@ -1,16 +1,15 @@
-## ======================================================
+
 ##  Virtual Clock for Timing Analysis (REQUIRED)
-## ======================================================
 
 # Create a virtual 100 MHz clock (10 ns period).
 # This lets Vivado analyze the maximum delay of your
 # combinational array multiplier.
 create_clock -name VIRTUAL_CLK -period 10.000
 
-## ======================================================
+
 ## Optional I/O pin assignments (leave commented unless
 ## you want to place the design on an FPGA board)
-## ======================================================
+
 # set_property PACKAGE_PIN <PIN> [get_ports {A_in[0]}]
 # set_property IOSTANDARD LVCMOS33 [get_ports {A_in[*]}]
 
