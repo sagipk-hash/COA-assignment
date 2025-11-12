@@ -1,0 +1,219 @@
+//WALLACE TREE OPTIMIZED CODE
+`timescale 1ns / 1ps
+//-------------------------------------------------------
+// FULL ADDER
+//-------------------------------------------------------
+module fulladder(input wire a,b,c, output wire sum,carry);
+    assign sum = a ^ b ^ c;
+    assign carry = (a & b) | (b & c) | (c & a);
+endmodule
+
+//-------------------------------------------------------
+// 7-to-3 COMPRESSOR
+//-------------------------------------------------------
+module compressor_7_to_3(
+    input  wire w0,w1,w2,w3,w4,w5,w6,
+    output wire sum, c0, c1
+);
+    wire s1,s2,s3,s4,d1,d2,d3,d4;
+
+    fulladder fa1(.a(w0), .b(w1), .c(w2), .sum(s1), .carry(d1));
+    fulladder fa2(.a(w3), .b(w4), .c(w5), .sum(s2), .carry(d2));
+    fulladder fa3(.a(s1), .b(s2), .c(w6), .sum(s3), .carry(d3));
+    fulladder fa4(.a(d1), .b(d2), .c(d3), .sum(s4), .carry(d4));
+
+    assign sum = s3;
+    assign c0  = s4;
+    assign c1  = d4;
+endmodule
+
+//-------------------------------------------------------
+// ARRAY 7-to-3 COMPRESSOR
+//-------------------------------------------------------
+module array_7_to_3_compressor(
+    input  wire [31:0] p0,p1,p2,p3,p4,p5,p6,
+    output wire [31:0] psum, pc0, pc1
+);
+    genvar j;
+    generate
+        for(j=0; j<32; j=j+1) begin
+            compressor_7_to_3 C(
+                p0[j], p1[j], p2[j], p3[j], p4[j], p5[j], p6[j],
+                psum[j], pc0[j], pc1[j]
+            );
+        end
+    endgenerate
+endmodule
+
+//-------------------------------------------------------
+// ARRAY 3-to-2 COMPRESSOR
+//-------------------------------------------------------
+module array_3_to_2_compressor(
+    input  wire [31:0] a,b,c,
+    output wire [31:0] sum, carry
+);
+    assign sum   = a ^ b ^ c;
+    assign carry = ((a & b) | (b & c) | (c & a)) << 1;
+endmodule
+
+//-------------------------------------------------------
+// 32-BIT LADNER-FISCHER ADDER
+//-------------------------------------------------------
+module ladner_fischer_adder(
+    input  wire [31:0] a,b,
+    output wire [31:0] sum,
+    output wire carry
+);
+
+    wire [31:0] g,p,g1,p1,g2,p2,g3,p3,g4,p4,g5,p5;
+    genvar i;
+
+    assign g = a & b;
+    assign p = a ^ b;
+
+    assign g1[0]=g[0]; assign p1[0]=p[0];
+    generate for(i=1;i<32;i=i+1)
+        assign {g1[i],p1[i]} = {g[i] | (p[i] & g[i-1]), p[i] & p[i-1]};
+    endgenerate
+
+    assign g2[1:0]=g1[1:0]; assign p2[1:0]=p1[1:0];
+    generate for(i=2;i<32;i=i+1)
+        assign {g2[i],p2[i]} = {g1[i] | (p1[i] & g1[i-2]), p1[i] & p1[i-2]};
+    endgenerate
+
+    assign g3[3:0]=g2[3:0]; assign p3[3:0]=p2[3:0];
+    generate for(i=4;i<32;i=i+1)
+        assign {g3[i],p3[i]} = {g2[i] | (p2[i] & g2[i-4]), p2[i] & p2[i-4]};
+    endgenerate
+
+    assign g4[7:0]=g3[7:0]; assign p4[7:0]=p3[7:0];
+    generate for(i=8;i<32;i=i+1)
+        assign {g4[i],p4[i]} = {g3[i] | (p3[i] & g3[i-8]), p3[i] & p3[i-8]};
+    endgenerate
+
+    assign g5[15:0]=g4[15:0]; assign p5[15:0]=p4[15:0];
+    generate for(i=16;i<32;i=i+1)
+        assign {g5[i],p5[i]} = {g4[i] | (p4[i] & g4[i-16]), p4[i] & p4[i-16]};
+    endgenerate
+
+    assign sum[0] = p[0];
+    generate for(i=1;i<32;i=i+1)
+        assign sum[i] = p[i] ^ g5[i-1];
+    endgenerate
+
+    assign carry = g5[31];
+endmodule
+
+//-------------------------------------------------------
+// ✅ 4-STAGE PIPELINED WALLACE MULTIPLIER (16x16 → 32-bit)
+//-------------------------------------------------------
+module piped_wallace_mult(
+    input wire clock, reset,
+    input wire [15:0] x,y,
+    output reg [31:0] prod
+);
+
+    genvar i,j;
+    wire [31:0] pp[0:15];
+
+    //---------------------------------------------------
+    // PARTIAL PRODUCTS
+    //---------------------------------------------------
+    generate
+        for(i=0; i<16; i=i+1) begin : PP_GEN
+            for(j=0; j<32; j=j+1) begin : COL
+                assign pp[i][j] = (j>=i && j<i+16) ? (x[j-i] & y[i]) : 1'b0;
+            end
+        end
+    endgenerate
+
+    //---------------------------------------------------
+    // STAGE 0 → Compress pp[0..6] and pp[7..13]
+    //---------------------------------------------------
+    wire [31:0] s0,s1,c0_0,c1_0,c02_0,c12_0;
+
+    array_7_to_3_compressor A0(pp[0],pp[1],pp[2],pp[3],pp[4],pp[5],pp[6], s0, c0_0, c02_0);
+    array_7_to_3_compressor A1(pp[7],pp[8],pp[9],pp[10],pp[11],pp[12],pp[13], s1, c1_0, c12_0);
+
+    wire [31:0] c0  = c0_0  << 1;
+    wire [31:0] c1  = c1_0  << 1;
+    wire [31:0] c02 = c02_0 << 2;
+    wire [31:0] c12 = c12_0 << 2;
+
+    //---------------------------------------------------
+    // ✅ PIPELINE STAGE 1
+    //---------------------------------------------------
+    reg [31:0] rs0,rs1,rc0,rc1,rc02,rc12, rpp14,rpp15;
+
+    always @(posedge clock or posedge reset)
+        if(reset) begin
+            rs0<=0; rs1<=0; rc0<=0; rc1<=0; rc02<=0; rc12<=0;
+            rpp14<=0; rpp15<=0;
+        end else begin
+            rs0<=s0; rs1<=s1; rc0<=c0; rc1<=c1; rc02<=c02; rc12<=c12;
+            rpp14<=pp[14]; rpp15<=pp[15];
+        end
+
+    //---------------------------------------------------
+    // STAGE 1 → Compress 7 rows: (Stage0 outputs + pp14)
+    //---------------------------------------------------
+    wire [31:0] sum1,carry_1,carry_2;
+
+    array_7_to_3_compressor A2(
+        rs0,rs1,rc0,rc1,rc02,rc12,rpp14,
+        sum1, carry_1, carry_2
+    );
+
+    wire [31:0] carry1 = carry_1 << 1;
+    wire [31:0] carry2 = carry_2 << 2;
+
+    
+    //  PIPELINE STAGE 2
+    
+    reg [31:0] rsum1,rcarry1,rcarry2,rlast;
+
+    always @(posedge clock or posedge reset)
+        if(reset) begin
+            rsum1<=0; rcarry1<=0; rcarry2<=0; rlast<=0;
+        end else begin
+            rsum1<=sum1; rcarry1<=carry1; rcarry2<=carry2;
+            rlast<=rpp15;
+        end
+
+    
+    // STAGE 2 → Reduce 3 rows then 3 rows again
+    
+    wire [31:0] psum_1, pcarry_1, final_sum_pre, final_carry_pre;
+
+    array_3_to_2_compressor C0(rsum1, rcarry1, rcarry2, psum_1, pcarry_1);
+    array_3_to_2_compressor C1(rlast, psum_1, pcarry_1, final_sum_pre, final_carry_pre);
+
+    // PIPELINE STAGE 3
+    
+    reg [31:0] rsum, rcarry;
+
+    always @(posedge clock or posedge reset)
+        if(reset) begin
+            rsum<=0; rcarry<=0;
+        end else begin
+            rsum<=final_sum_pre;
+            rcarry<=final_carry_pre;
+        end
+
+    
+    // FINAL ADDER (Ladner-Fischer)
+    
+    wire [31:0] final_sum;
+    wire cout;
+
+    ladner_fischer_adder LF(rsum, rcarry, final_sum, cout);
+
+    //  PIPELINE STAGE 4 - FINAL OUTPUT
+    
+    always @(posedge clock or posedge reset)
+        if(reset)
+            prod <= 0;
+        else
+            prod <= final_sum;
+
+endmodule
