@@ -1,0 +1,173 @@
+`timescale 1ns / 1ps
+
+
+// Half Adder
+
+module half_adder (
+    input  a,
+    input  b,
+    output sum,
+    output carry
+);
+    assign sum   = a ^ b;
+    assign carry = a & b;
+endmodule
+
+
+
+// Full Adder (built from two half adders)
+
+module full_adder (
+    input  a,
+    input  b,
+    input  cin,
+    output sum,
+    output carry
+);
+    wire s1, c1, c2;
+
+    half_adder HA1 (.a(a),  .b(b),  .sum(s1), .carry(c1));
+    half_adder HA2 (.a(s1), .b(cin), .sum(sum), .carry(c2));
+
+    assign carry = c1 | c2;
+endmodule
+
+
+// 16x16 Array Multiplier (structural, generate-based)
+// Uses only AND, half adders, full adders (no +, no *)
+
+module array_multiplier_16bit (
+    input  [15:0] A,
+    input  [15:0] B,
+    output [31:0] P
+);
+
+    // Partial products: pp[row][col] where row = B index (0..15), col = A index (0..15)
+    wire [15:0] pp [15:0];
+    genvar i, j;
+
+    // Generate partial products
+    generate
+        for (i = 0; i < 16; i = i + 1) begin : gen_pp_row
+            for (j = 0; j < 16; j = j + 1) begin : gen_pp_col
+                assign pp[i][j] = A[j] & B[i];
+            end
+        end
+    endgenerate
+
+    // Accumulation arrays:
+    // v_sum_wires[row] is a 32-bit vector of sums produced by that row (bits 0..31)
+    // h_carry_wires[row] is a 33-bit vector of carries (we index up to 32)
+    wire [31:0] v_sum_wires   [14:0]; // rows 0..14
+    wire [32:0] h_carry_wires [14:0]; // carries for rows 0..14
+
+    // P[0] is directly pp[0][0]
+    assign P[0] = pp[0][0];
+
+    // ---------- Row 0: add pp[0] and pp[1] ----------
+    // bit 1: half adder of pp[0][1] and pp[1][0]
+    half_adder HA_0_1 (
+        .a(pp[0][1]),
+        .b(pp[1][0]),
+        .sum(v_sum_wires[0][1]),
+        .carry(h_carry_wires[0][2])
+    );
+    assign P[1] = v_sum_wires[0][1];
+
+    // bits 2..15: full adders
+    generate
+        for (j = 2; j < 16; j = j + 1) begin : gen_row0_fa
+            full_adder FA_row0 (
+                .a(pp[0][j]),
+                .b(pp[1][j-1]),
+                .cin(h_carry_wires[0][j]),
+                .sum(v_sum_wires[0][j]),
+                .carry(h_carry_wires[0][j+1])
+            );
+        end
+    endgenerate
+
+    // bit 16: half adder (pp[1][15] with carry)
+    half_adder FA_0_16 (
+        .a(pp[1][15]),
+        .b(h_carry_wires[0][16]),
+//        .cin(h_carry_wires[0][15]),
+        .sum(v_sum_wires[0][16]),
+        .carry(h_carry_wires[0][17])
+    );
+
+    assign v_sum_wires[0][17] = h_carry_wires[0][17];
+// bits 18..31: ripple the previous row's zeros (just propagate zeros/carries)
+    
+    generate
+        for (j = 18; j <= 31; j = j + 1) begin : gen_row0_zero
+            // no new pp inputs; sum is previous row value (which is zero for row0),
+            // but to avoid Xs, tie sum to 0 and carry to 0 unless produced by earlier stage.
+            assign v_sum_wires[0][j]    = 1'b0;
+            assign h_carry_wires[0][j+1] = 1'b0;
+        end
+    endgenerate
+    
+    generate
+    for (i = 0; i < 15; i = i + 1) begin : init_carries
+        // indices 0..(i+1) should be zero for this row's carry vector before the first computed carry
+        // we drive them to 0 to avoid undriven Xs
+        for (j = 0; j <= i+1; j = j + 1) begin : init_c
+            wire dummy;
+            assign h_carry_wires[i][j] = 1'b0;
+        end
+    end
+    endgenerate
+
+
+    // ---------- Rows 1..14: each row i adds v_sum_wires[i-1] with pp[i+1] ----------
+    generate
+        for (i = 1; i < 15; i = i + 1) begin : gen_rows
+            // First meaningful column for this row is (i+1)
+            // Half adder for the first overlapping column: v_sum_wires[i-1][i+1] + pp[i+1][0]
+            half_adder HA_row_first (
+                .a(v_sum_wires[i-1][i+1]),
+                .b(pp[i+1][0]),
+                .sum(v_sum_wires[i][i+1]),
+                .carry(h_carry_wires[i][i+2])
+            );
+
+            // Assign final product bit for column (i+1)
+            assign P[i+1] = v_sum_wires[i][i+1];
+
+            // Middle region where both vectors overlap:
+            // j runs from (i+2) to (i+16) (these correspond to pp indices 1..15)
+            for (j = i + 2; j <= i + 16; j = j + 1) begin : gen_rows_fa
+                // compute pp index: pp_col = j - (i+1) which is in 1..15
+                full_adder FA_row_mid (
+                    .a(v_sum_wires[i-1][j]),
+                    .b(pp[i+1][j - (i+1)]),
+                    .cin(h_carry_wires[i][j]),
+                    .sum(v_sum_wires[i][j]),
+                    .carry(h_carry_wires[i][j+1])
+                );
+            end
+
+            // Tail region where pp has run out - just ripple previous sums with carries
+            for (j = i + 17; j <= 31; j = j + 1) begin : gen_rows_tail
+                half_adder HA_row_tail (
+                    .a(v_sum_wires[i-1][j]),
+                    .b(h_carry_wires[i][j]),
+                    .sum(v_sum_wires[i][j]),
+                    .carry(h_carry_wires[i][j+1])
+                );
+            end
+        end
+    endgenerate
+
+    // Final product bits P[16..31] come from the last row (i = 14)
+    generate
+        for (j = 16; j <= 31; j = j + 1) begin : gen_assign_high
+            assign P[j] = v_sum_wires[14][j];
+        end
+    endgenerate
+    
+    
+    // Note: h_carry_wires[14][32] would be the left-over carry beyond 32 bits; ignored.
+
+endmodule
